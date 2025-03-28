@@ -1,0 +1,10 @@
+services:
+  mongo:
+    build: ./db
+  server:
+    build: ./server
+    ports:
+      - 8443:443
+    environment:
+      DB_CONN_STRING: mongodb://aws-demo:aws-demo@mongo:27017/aws-demo?retryWrites=true&w=majority
+      DISABLE_HTML_ESCAPE: 0
