@@ -19,8 +19,8 @@ provider "aws" {}
 
 variable "AWS_REGION" {}
 
-resource "aws_ecr_repository" "app-repo" {
-  name = "aws-demo"
+resource "aws_ecr_repository" "repo" {
+  name = "pastebin"
 }
 
 # get authorization credentials to push to ecr
@@ -35,8 +35,8 @@ provider "docker" {
 }
 
 # build docker image
-resource "docker_image" "aws-demo" {
-  name = "${aws_ecr_repository.app-repo.repository_url}:latest"
+resource "docker_image" "pastebin" {
+  name = "${aws_ecr_repository.repo.repository_url}:latest"
   build {
     context = "./server"
   }
@@ -44,5 +44,5 @@ resource "docker_image" "aws-demo" {
 
 # push image to ecr repo
 resource "docker_registry_image" "upload" {
-  name = docker_image.app-repo.name
+  name = docker_image.pastebin.name
 }
