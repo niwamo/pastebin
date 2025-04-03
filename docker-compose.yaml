@@ -6,5 +6,5 @@ services:
     ports:
       - 8443:443
     environment:
-      DB_CONN_STRING: mongodb://aws-demo:aws-demo@mongo:27017/aws-demo?retryWrites=true&w=majority
+      DB_CONN_STRING: mongodb://pastebin:pastebin@mongo:27017/pastebin
       DISABLE_HTML_ESCAPE: 0

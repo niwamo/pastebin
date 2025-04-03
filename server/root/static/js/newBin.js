@@ -17,6 +17,9 @@ document.addEventListener("DOMContentLoaded", async function () {
             clearTimeout(id);
             if (response.ok) {
                 var table = document.getElementById("recent-bins");
+                if (table.rows.length > 10) {
+                    table.deleteRow(1);
+                }
                 var row = table.insertRow();
                 var titleCell = row.insertCell();
                 titleCell.textContent = formData.get("title");

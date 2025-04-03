@@ -14,11 +14,15 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+var DatabaseName         string = "pastebin"
+var ActiveCollectionName string = "active-bins"
+var OldCollectionName    string = "old-bins"
+var MaxBins              int64  = 10
+
 type Bin struct {
-	//ID int `bson:"id"` `json:"id"`
-	//Public bool `bson:"public"` `json:"public"`
-	Title   string `bson:"title"   json:"title"`
-	Content string `bson:"content" json:"content"`
+	Timestamp int64  `bson:"timestamp" json:"timestamp"`
+	Title     string `bson:"title"     json:"title"`
+	Content   string `bson:"content"   json:"content"`
 }
 
 func getGetBinsHandler(client *mongo.Client) http.HandlerFunc {
@@ -29,10 +33,11 @@ func getGetBinsHandler(client *mongo.Client) http.HandlerFunc {
 		}
 		log.Printf("Received request for %s", request.URL.Path)
 		
-		collection := client.Database("aws-demo").Collection("bins")
+		collection := client.Database(DatabaseName).Collection(ActiveCollectionName)
 
 		ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
-		cursor, err := collection.Find(ctx, bson.D{})
+		findOptions := options.Find().SetSort(bson.D{{"timestamp",1}})
+		cursor, err := collection.Find(ctx, bson.D{}, findOptions)
 		if err != nil {
 			log.Printf("Error with bin retrieval: %s", err)
 			http.Error(response, "Error", http.StatusInternalServerError)
@@ -85,32 +90,44 @@ func getNewBinHandler(client *mongo.Client, disableHTMLEscape bool) http.Handler
 			content = template.HTMLEscapeString(content)
 		}
 		bin := Bin{
-			Title: request.FormValue("title"),
-			Content: content,
+			Timestamp: time.Now().Unix(),
+			Title:     request.FormValue("title"),
+			Content:   content,
 		}
 
 		ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
-		collection := client.Database("aws-demo").Collection("bins")
+		activeCollection := client.Database(DatabaseName).Collection(ActiveCollectionName)
 
 		opts := options.Count().SetHint("_id_")
-		count, err := collection.CountDocuments(context.TODO(), bson.D{}, opts)
+		count, err := activeCollection.CountDocuments(context.TODO(), bson.D{}, opts)
 		if err != nil {
 			log.Print("Could not count documents")
 			http.Error(response, "Error", http.StatusInternalServerError)
 			return
 		}
-		if count > 25 {
-			http.Error(response, "Too many bins already", http.StatusBadRequest)
+		if count >= MaxBins {
+			findOptions := options.FindOneAndReplace().SetSort(bson.D{{"timestamp", 1}})
+			var oldBin Bin
+			err = activeCollection.FindOneAndReplace(ctx, bson.D{}, bin, findOptions).Decode(&oldBin)
+			if err != nil {
+				log.Printf("Error adding bin: %s", err)
+				http.Error(response, "Error adding bin", http.StatusInternalServerError)
+				return
+			}
+			oldCollection := client.Database(DatabaseName).Collection(OldCollectionName)
+			_, err = oldCollection.InsertOne(ctx, oldBin)
+			if err != nil {
+				log.Printf("Error adding bin to old collection: %s", err)
+			}
 			return
 		}
-
-		_, err = collection.InsertOne(ctx, bin)
+		// if fewer than 25
+		_, err = activeCollection.InsertOne(ctx, bin)
 		if err != nil {
-			log.Print("Error adding bin")
+			log.Printf("Error adding bin: %s", err)
 			http.Error(response, "Error adding bin", http.StatusBadRequest)
 			return
 		}
-
 		fmt.Fprint(response, "Success")
 	}
 }
@@ -121,7 +138,7 @@ func getStatic(response http.ResponseWriter, request *http.Request) {
 		log.Printf("Received illegal %s request to %s", request.Method, path)
 		return
 	}
-	log.Print("Received request for %s", path)
+	log.Printf("Received request for %s", path)
 	if (path[len(path)-1] == byte('/')) {
 		path += "index.html"
 	}
@@ -160,7 +177,7 @@ func main() {
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	err = client.Connect(ctx)
 	if err != nil {
-		log.Print("Error connecting to mongoDB: %s", err)
+		log.Printf("Error connecting to mongoDB: %s", err)
 	}
 	defer client.Disconnect(ctx)
 	err = client.Ping(ctx, nil)
@@ -174,8 +191,6 @@ func main() {
 	http.HandleFunc("/", getStatic)
 
 	// API handlers
-	//getBinHandler := getGetBinHandler(client)
-	//http.HandleFunc("/api/v1.0/getBin", getBinHandler)
 	getBinsHandler := getGetBinsHandler(client)
 	http.HandleFunc("/api/v1.0/getBins", getBinsHandler)
 	newBinHandler := getNewBinHandler(client, disableHTMLEscape)

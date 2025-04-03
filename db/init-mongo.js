@@ -1,9 +1,9 @@
 db.createUser({
-  user: "aws-demo",
-  pwd: "aws-demo",
+  user: "pastebin",
+  pwd:  "pastebin",
   roles: ["dbOwner"]
 });
 
-db.bins.insertMany([
-  { title: "firstBin", content: "firstBinContents" }
+db["active-bins"].insertMany([
+  { timestamp: 1743704875, title: "firstBin", content: "firstBinContents" }
 ]);
