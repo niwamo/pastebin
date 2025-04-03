@@ -17,16 +17,15 @@ RUN openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
     -keyout /cert.key \
     -out /cert.crt
 
-# STAGE 2
+# STAGE 2: PACKAGE APP
+FROM scratch AS app
 
-FROM ubuntu:latest
+COPY --from=builder /server.bin /server
+COPY --from=builder /cert.key /cert.key
+COPY --from=builder /cert.crt /cert.crt
 
-COPY --from=builder /server.bin /opt/server
-COPY --from=builder /cert.key /opt/cert.key
-COPY --from=builder /cert.crt /opt/cert.crt
-
-COPY ./*.html /opt/
+COPY ./root /var/www/html/
 
 EXPOSE 443
 
-CMD ["/opt/server"]
+CMD ["/server"]

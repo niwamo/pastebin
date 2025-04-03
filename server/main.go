@@ -6,79 +6,71 @@ import (
 	"log"
 	"context"
 	"time"
-	"strings"
 	"os"
 	"html/template"
-	"regexp"
-	"strconv"
+	"encoding/json"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type Bin struct {
-	Title string `bson:"title"`
-	Content string `bson:"content"`
+	//ID int `bson:"id"` `json:"id"`
+	//Public bool `bson:"public"` `json:"public"`
+	Title   string `bson:"title"   json:"title"`
+	Content string `bson:"content" json:"content"`
 }
 
-func getRootHandler(client *mongo.Client, tmpl *template.Template) http.HandlerFunc {
+func getGetBinsHandler(client *mongo.Client) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != "GET" {
-			log.Printf("Received illegal %s request to /", request.Method)
+			log.Printf("Received illegal %s request to %s", request.Method, request.URL.Path)
 			return
 		}
-		log.Print("Received request for /")
+		log.Printf("Received request for %s", request.URL.Path)
 		
 		collection := client.Database("aws-demo").Collection("bins")
 
 		ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
 		cursor, err := collection.Find(ctx, bson.D{})
-		var data map[string]template.HTML
 		if err != nil {
-			log.Print(err)
-			data = map[string]template.HTML{
-				"Bins": template.HTML("<tr><td>Error</td><td>Retrieving bins</td></tr>"),
+			log.Printf("Error with bin retrieval: %s", err)
+			http.Error(response, "Error", http.StatusInternalServerError)
+			return
+		} 
+		defer cursor.Close(ctx)
+		var results []Bin
+		for cursor.Next(ctx) {
+			var bin Bin
+			if err := cursor.Decode(&bin); err != nil {
+				log.Printf("Error parsing MongoDB response: %s", err)
 			}
-		} else {
-			defer cursor.Close(ctx)
-			var results []string
-			for cursor.Next(ctx) {
-				var bin Bin
-				if err := cursor.Decode(&bin); err != nil {
-					log.Fatal(err)
-				}
-				row := fmt.Sprintf("<tr><td>%s</td><td>%s</td>", bin.Title, bin.Content)
-				results = append(results, row)
-			}
-			result := strings.Join(results, "\n")
-			data = map[string]template.HTML{
-				"Bins": template.HTML(result),
-			}
+			results = append(results, bin)
 		}
-		
-		err = tmpl.Execute(response, data)
-
+		jsonData, err := json.Marshal(results)
 		if err != nil {
-			http.Error(response, err.Error(), http.StatusInternalServerError)
+			log.Printf("Error with JSON encoding: %s", err)
+			http.Error(response, "Error", http.StatusInternalServerError)
 			return
 		}
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusOK)
+		fmt.Fprint(response, string(jsonData))
+		return
 	}
 }
 
-func getSubmitHandler(client *mongo.Client) http.HandlerFunc {
-	disableHTMLEscape := os.Getenv("DISABLE_HTML_ESCAPE")
-	log.Printf("DISABLE_HTML_ESCAPE: %s", disableHTMLEscape)
-	
+func getNewBinHandler(client *mongo.Client, disableHTMLEscape bool) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != "POST" {
-			log.Printf("Received illegal %s request to /submit", request.Method)
+			log.Printf("Received illegal %s request to %s", request.Method, request.URL.Path)
 			return
 		}
-		log.Print("Received request to /submit")
+		log.Printf("Received request to %s", request.URL.Path)
 
 		if request.ContentLength > 512 {
 			log.Print("Request size exceeded")
-			http.Error(response, "Bin size exceeded", http.StatusBadRequest)
+			http.Error(response, "Request was too large", http.StatusBadRequest)
 			return
 		}
 
@@ -89,7 +81,7 @@ func getSubmitHandler(client *mongo.Client) http.HandlerFunc {
 		}
 		
 		content := request.FormValue("content")
-		if disableHTMLEscape != "1"	{
+		if ! disableHTMLEscape {
 			content = template.HTMLEscapeString(content)
 		}
 		bin := Bin{
@@ -123,87 +115,54 @@ func getSubmitHandler(client *mongo.Client) http.HandlerFunc {
 	}
 }
 
-func getClearHandler(client *mongo.Client) http.HandlerFunc {
-	return func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != "POST" {
-			log.Printf("Received illegal %s request to /submit", request.Method)
-			return
-		}
-		log.Print("Received request to /submit")
-
-		dbName := "aws-demo"
-		ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
-		collections, err := client.Database(dbName).ListCollectionNames(ctx, bson.D{})
-		if err != nil {
-			log.Printf("Error clearing %s", err)
-			http.Error(response, "Error clearing", http.StatusInternalServerError)
-			return
-		}
-
-		re := regexp.MustCompile(`^bkp-(\d+)$`)
-		maxBackup := 0
-
-		for _, name := range collections {
-			matches := re.FindStringSubmatch(name)
-			if len(matches) == 2 {
-				num, err := strconv.Atoi(matches[1])
-				if err == nil && num > maxBackup {
-					maxBackup = num
-				}
-			}
-		}
-
-		oldName := "bins"
-		newName := fmt.Sprintf("bkp-%d", maxBackup+1)
-		cmd := bson.D{{"renameCollection", dbName + "." + oldName}, {"to", dbName + "." + newName}, {"dropTarget", false}}
-		
-		err = client.Database("admin").RunCommand(ctx, cmd).Err()
-		if err != nil {
-			log.Printf("Error clearing %s", err)
-			http.Error(response, "Error clearing", http.StatusInternalServerError)
-			return
-		}
-
-		log.Printf("Collection '%s' renamed to '%s' successfully.\n", oldName, newName)
-
-		fmt.Fprint(response, "Success")
+func getStatic(response http.ResponseWriter, request *http.Request) {
+	path := request.URL.Path
+	if request.Method != "GET" {
+		log.Printf("Received illegal %s request to %s", request.Method, path)
+		return
 	}
-}
-
-func dbErrorServer() {
-	log.Print("Running db error server")
-	getRoot := func(response http.ResponseWriter, request *http.Request) {
-		http.Error(response, "Database error", http.StatusInternalServerError)
+	log.Print("Received request for %s", path)
+	if (path[len(path)-1] == byte('/')) {
+		path += "index.html"
 	}
-	http.HandleFunc("/", getRoot)
-	err := http.ListenAndServeTLS(":443", "/opt/cert.crt", "/opt/cert.key", nil)
-	if err != nil {
-		log.Print(err)
+	filepath := fmt.Sprintf("/var/www/html%s", path)
+	if _, err := os.Stat(filepath); err == nil {
+		log.Printf("Returning file: %s", filepath)
+		http.ServeFile(response, request, filepath)
+		return
+	} else {
+		extPath := fmt.Sprintf("%s.html", filepath)
+		if _, err := os.Stat(extPath); err == nil {
+			log.Printf("Returning file: %s", extPath)
+			http.ServeFile(response, request, extPath)
+			return
+		}
+		log.Printf("Path not found: %s", filepath)
+		http.Error(response, "Path not found", http.StatusNotFound)
+		return
 	}
 }
 
 func main() {
 	log.Print("Starting server...")
 
+	// retrieve configuration variables from environment
 	uri := os.Getenv("DB_CONN_STRING")
 	log.Printf("DB_CONN_STRING: %s", uri)
+	disableHTMLEscape := os.Getenv("DISABLE_HTML_ESCAPE") == "1"
+	log.Printf("DISABLE_HTML_ESCAPE: %s", disableHTMLEscape)
 
+	// connect to database
 	client, err := mongo.NewClient(options.Client().ApplyURI(uri))
 	if err != nil {
-		log.Print(err)
-		dbErrorServer()
-		return
+		log.Printf("Error creating mongoDB client: %s", err)
 	}
-
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	err = client.Connect(ctx)
 	if err != nil {
-		log.Print(err)
-		dbErrorServer()
-		return
+		log.Print("Error connecting to mongoDB: %s", err)
 	}
 	defer client.Disconnect(ctx)
-
 	err = client.Ping(ctx, nil)
 	if err != nil {
 		log.Printf("Error pinging database: %s", err)
@@ -211,24 +170,21 @@ func main() {
 		log.Print("Connected to database")
 	}
 
-	rootTemplate, err := template.ParseFiles("/opt/index.html")
-	if err != nil {
-		log.Fatal(err)
-	}
+	// default handler
+	http.HandleFunc("/", getStatic)
 
-	getRoot := getRootHandler(client, rootTemplate)
-	http.HandleFunc("/", getRoot)
+	// API handlers
+	//getBinHandler := getGetBinHandler(client)
+	//http.HandleFunc("/api/v1.0/getBin", getBinHandler)
+	getBinsHandler := getGetBinsHandler(client)
+	http.HandleFunc("/api/v1.0/getBins", getBinsHandler)
+	newBinHandler := getNewBinHandler(client, disableHTMLEscape)
+	http.HandleFunc("/api/v1.0/newBin", newBinHandler)
 
-	getSubmit := getSubmitHandler(client)
-	http.HandleFunc("/submit", getSubmit)
-
-	getClear := getClearHandler(client)
-	http.HandleFunc("/clear", getClear)
-
-	err = http.ListenAndServeTLS(":443", "/opt/cert.crt", "/opt/cert.key", nil)
+	// start server
+	err = http.ListenAndServeTLS(":443", "/cert.crt", "/cert.key", nil)
 	if err != nil {
 		log.Print(err)
 	}
-
 	log.Print("Exiting.")
 }
