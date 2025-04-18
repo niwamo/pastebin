@@ -2,13 +2,18 @@ services:
   mongo:
     build: ./db
   server:
-    build: ./server
-    ports:
-      - 8443:443
+    build: 
+      context: .
+      dockerfile: ./server/Dockerfile
     environment:
       DB_CONN_STRING: mongodb://pastebin:pastebin@mongo:27017/pastebin
       DISABLE_HTML_ESCAPE: 0
-  client-builder:
-    build: ./client
+    ports:
+      - 8443:443
+      - 50051:50051
+  client:
+    build: 
+      context: .
+      dockerfile: ./client/Dockerfile
     volumes:
-      - ./client:/out:rw
+      - ./client:/pastebin/client:rw
