@@ -8,3 +8,4 @@ build:
 		/pastebin/proto/pastebin.proto
 	go mod tidy
 	go build -o ./client/pastebin-cli ./client
+	GOOS=windows go build -o ./client/pastebin-cli.exe ./client

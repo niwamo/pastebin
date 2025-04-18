@@ -1,2 +1,6 @@
 **/.terraform/
 *.tfstate*
+
+**/pastebin-cli
+**/*.bin
+**/*.exe
