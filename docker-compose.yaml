@@ -8,3 +8,7 @@ services:
     environment:
       DB_CONN_STRING: mongodb://pastebin:pastebin@mongo:27017/pastebin
       DISABLE_HTML_ESCAPE: 0
+  client-builder:
+    build: ./client
+    volumes:
+      - ./client:/out:rw

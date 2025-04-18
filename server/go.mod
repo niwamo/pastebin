@@ -1,3 +1,3 @@
-module aws-demo-app
+module pastebin
 
 go 1.24
