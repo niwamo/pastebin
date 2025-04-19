@@ -1,60 +1,90 @@
 package main
 
 import (
-	"flag"
-	"log"
 	"context"
 	"time"
 	"fmt"
-	"slices"
+	"os"
+	"crypto/tls"
+	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	pb "pastebin/proto"
 )
 
 var (
-	addr = flag.String("addr", "localhost:50051", "the address to connect to")
+	address string
 )
 
-func main() {
-	flag.Parse()
-
-	cmd := flag.Arg(0)
-	if !slices.Contains([]string{"getBins", "newBin"}, cmd) {
-		log.Fatalf("ERROR: UNKNOWN COMMAND")
-		return
+func Connect(addr string) (pb.PasteBinClient, *grpc.ClientConn) {
+	tlsConfig := &tls.Config {
+		InsecureSkipVerify: true,
 	}
-
-	// Set up a connection to the server.
-	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	creds := credentials.NewTLS(tlsConfig)
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
-		log.Fatalf("did not connect: %v", err)
+		fmt.Printf("ERROR: did not connect: %v\n", err)
+		os.Exit(1)
 	}
-	defer conn.Close()
 	client := pb.NewPasteBinClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	
-	if (cmd == "getBins") {
-		r, err := client.GetBins(ctx, &pb.GetBinsRequest{})
-		if err != nil {
-			log.Fatalf("could not get bins: %v", err)
-		}
-		for _, bin := range r.GetData() {
-			fmt.Printf("time: %d\ttitle: %s\tcontent: %s\n", bin.Timestamp, bin.Title, bin.Content)
-		}
-	} 
-	if (cmd == "newBin") {
-		if flag.NArg() < 3 {
-			log.Fatalf("ERROR: NOT ENOUGH ARGS")
-			return
-		}
-		_, err := client.NewBin(ctx, &pb.NewBinRequest{Title: flag.Arg(1), Content: flag.Arg(2)})
-		if err != nil {
-			log.Fatalf("could not add bin: %v", err)
-		}
-		fmt.Println("Success")
-	} 
+	return client, conn
+}
 
-	return
+func main() {
+	rootCmd := &cobra.Command{
+		Use:   "pastebin-cli",
+		Short: "A command-line gRPC client for pastebin",
+	}
+
+	rootCmd.PersistentFlags().StringVarP(&address, "address", "a", "localhost:50051", "Server address")
+
+	// `getBins` subcommand
+	getBins := &cobra.Command{
+		Use:   "getBins",
+		Short: "Retrieves bins",
+		Run: func(cmd *cobra.Command, args []string) {
+			client, conn := Connect(address)
+			defer conn.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			r, err := client.GetBins(ctx, &pb.GetBinsRequest{})
+			if err != nil {
+				fmt.Printf("ERROR: could not get bins: %v\n", err)
+				os.Exit(1)
+			}
+			for _, bin := range r.GetData() {
+				fmt.Printf("time: %d\ttitle: %s\tcontent: %s\n", bin.Timestamp, bin.Title, bin.Content)
+			}
+		},
+	}
+
+	// `newBin` subcommand
+	newBin := &cobra.Command{
+		Use:   "newBin <title> <content>",
+		Short: "Submits a new bin",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			title := args[0]
+			content := args[1]
+			client, conn := Connect(address)
+			defer conn.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, err := client.NewBin(ctx, &pb.NewBinRequest{Title: title, Content: content})
+			if err != nil {
+				fmt.Printf("ERROR: could not add bin: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Success")
+		},
+	}
+
+	// Register subcommands
+	rootCmd.AddCommand(getBins, newBin)
+
+	// Run CLI
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }

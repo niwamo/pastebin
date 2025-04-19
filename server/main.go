@@ -15,6 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	pb "pastebin/proto"
 )
 
@@ -25,6 +26,7 @@ var MaxBins              int64  = 10
 var DB                   *mongo.Client
 var URI                  string
 var DISABLE_HTML_ESCAPE  bool
+var ENABLE_GRPC          bool
 
 type Bin struct {
 	Timestamp int64  `bson:"timestamp" json:"timestamp"`
@@ -32,6 +34,7 @@ type Bin struct {
 	Content   string `bson:"content"   json:"content"`
 }
 
+// shared function
 func getBins() ([]Bin, error) {
 	collection := DB.Database(DatabaseName).Collection(ActiveCollectionName)
 	ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
@@ -53,6 +56,7 @@ func getBins() ([]Bin, error) {
 	return results, nil
 }
 
+// HTTP wrapper
 func getBinsHTTPHandler(response http.ResponseWriter, request *http.Request) {
 	if request.Method != "GET" {
 		log.Printf("Received illegal %s request to %s", request.Method, request.URL.Path)
@@ -79,6 +83,7 @@ func getBinsHTTPHandler(response http.ResponseWriter, request *http.Request) {
 	return
 }
 
+// gRPC wrapper
 func (s *server) GetBins(_ context.Context, in *pb.GetBinsRequest) (*pb.GetBinsReply, error) {
 	log.Printf("Received request to gRPC GetBins")
 	results, err := getBins()
@@ -98,6 +103,7 @@ func (s *server) GetBins(_ context.Context, in *pb.GetBinsRequest) (*pb.GetBinsR
 	return &pb.GetBinsReply{Data: out}, nil
 }
 
+// shared function
 func newBin(title string, content string) (int32, error) {
 	if len(title) > 20 || len(content) > 256 {
 		return -1, errors.New("Request too large")
@@ -139,6 +145,7 @@ func newBin(title string, content string) (int32, error) {
 	return 0, nil
 }
 
+// HTTP wrapper
 func newBinHTTPHandler(response http.ResponseWriter, request *http.Request) {
 	if request.Method != "POST" {
 		log.Printf("Received illegal %s request to %s", request.Method, request.URL.Path)
@@ -171,6 +178,7 @@ func newBinHTTPHandler(response http.ResponseWriter, request *http.Request) {
 	fmt.Fprint(response, "Success")
 }
 
+// gRPC wrapper
 func (s *server) NewBin(_ context.Context, in *pb.NewBinRequest) (*pb.NewBinResponse, error) {
 	log.Printf("Received request to gRPC NewBin")
 	_, err := newBin(in.Title, in.Content)
@@ -180,6 +188,7 @@ func (s *server) NewBin(_ context.Context, in *pb.NewBinRequest) (*pb.NewBinResp
 	return &pb.NewBinResponse{Status: 200}, nil
 }
 
+// default HTTP handler
 func getStatic(response http.ResponseWriter, request *http.Request) {
 	path := request.URL.Path
 	if request.Method != "GET" {
@@ -208,6 +217,7 @@ func getStatic(response http.ResponseWriter, request *http.Request) {
 	}
 }
 
+// web server to be fun as go routine
 func ServeWeb() {
 	http.HandleFunc("/", getStatic)
 	http.HandleFunc("/api/v1.0/getBins", getBinsHTTPHandler)
@@ -223,12 +233,19 @@ type server struct {
 	pb.UnimplementedPasteBinServer
 }
 
+// gRPC server to be fun as go routine
 func ServeGRPC() {
 	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", 50051))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Printf("gRPC failed to listen. Exiting. Error message: %v", err)
+		return
 	}
-	s := grpc.NewServer()
+	creds, err := credentials.NewServerTLSFromFile("/cert.crt", "/cert.key")
+	if err != nil {
+		log.Printf("gRPC failed to load TLS certs. Exiting. Error: %v", err)
+		return
+	}
+	s := grpc.NewServer(grpc.Creds(creds))
 	pb.RegisterPasteBinServer(s, &server{})
 	log.Printf("gRPC server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
@@ -239,10 +256,12 @@ func ServeGRPC() {
 func main() {
 	log.Print("Starting server(s)...")
 
-	URI := os.Getenv("DB_CONN_STRING")
+	URI = os.Getenv("DB_CONN_STRING")
 	log.Printf("DB_CONN_STRING: %s", URI)
-	DISABLE_HTML_ESCAPE := os.Getenv("DISABLE_HTML_ESCAPE") == "1"
+	DISABLE_HTML_ESCAPE = os.Getenv("DISABLE_HTML_ESCAPE") == "1"
 	log.Printf("DISABLE_HTML_ESCAPE: %s", DISABLE_HTML_ESCAPE)
+	ENABLE_GRPC = os.Getenv("ENABLE_GRPC") == "1"
+	log.Printf("ENABLE_GRPC: %s", ENABLE_GRPC)
 
 	// connect to database
 	client, err := mongo.NewClient(options.Client().ApplyURI(URI))
@@ -264,7 +283,7 @@ func main() {
 	DB = client
 	
 	go ServeWeb()
-	go ServeGRPC()
+	if ENABLE_GRPC { go ServeGRPC() }
 
 	for {
 		time.Sleep(time.Second)

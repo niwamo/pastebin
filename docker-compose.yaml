@@ -8,6 +8,7 @@ services:
     environment:
       DB_CONN_STRING: mongodb://pastebin:pastebin@mongo:27017/pastebin
       DISABLE_HTML_ESCAPE: 0
+      ENABLE_GRPC: 1
     ports:
       - 8443:443
       - 50051:50051
