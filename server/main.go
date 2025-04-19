@@ -217,12 +217,26 @@ func getStatic(response http.ResponseWriter, request *http.Request) {
 	}
 }
 
-// web server to be fun as go routine
+func redirectHTTP(response http.ResponseWriter, request *http.Request) {
+	newURL := "https://" + request.Host + request.URL.RequestURI()
+	http.Redirect(response, request, newURL, http.StatusMovedPermanently)
+}
+
+// web server to be run as go routine
 func ServeWeb() {
-	http.HandleFunc("/", getStatic)
-	http.HandleFunc("/api/v1.0/getBins", getBinsHTTPHandler)
-	http.HandleFunc("/api/v1.0/newBin", newBinHTTPHandler)
-	err := http.ListenAndServeTLS(":443", "/cert.crt", "/cert.key", nil)
+	go func() {
+		httpMux := http.NewServeMux()
+		httpMux.HandleFunc("/", redirectHTTP)
+		err := http.ListenAndServe(":80", httpMux)
+		if err != nil {
+			log.Printf("HTTP Redirect failed: %s", err)
+		}
+	}()
+	httpsMux := http.NewServeMux()
+	httpsMux.HandleFunc("/", getStatic)
+	httpsMux.HandleFunc("/api/v1.0/getBins", getBinsHTTPHandler)
+	httpsMux.HandleFunc("/api/v1.0/newBin", newBinHTTPHandler)
+	err := http.ListenAndServeTLS(":443", "/cert.crt", "/cert.key", httpsMux)
 	if err != nil {
 		log.Print(err)
 	}
@@ -233,7 +247,7 @@ type server struct {
 	pb.UnimplementedPasteBinServer
 }
 
-// gRPC server to be fun as go routine
+// gRPC server to be run as go routine
 func ServeGRPC() {
 	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", 50051))
 	if err != nil {
@@ -259,9 +273,9 @@ func main() {
 	URI = os.Getenv("DB_CONN_STRING")
 	log.Printf("DB_CONN_STRING: %s", URI)
 	DISABLE_HTML_ESCAPE = os.Getenv("DISABLE_HTML_ESCAPE") == "1"
-	log.Printf("DISABLE_HTML_ESCAPE: %s", DISABLE_HTML_ESCAPE)
+	log.Printf("DISABLE_HTML_ESCAPE: %t", DISABLE_HTML_ESCAPE)
 	ENABLE_GRPC = os.Getenv("ENABLE_GRPC") == "1"
-	log.Printf("ENABLE_GRPC: %s", ENABLE_GRPC)
+	log.Printf("ENABLE_GRPC: %t", ENABLE_GRPC)
 
 	// connect to database
 	client, err := mongo.NewClient(options.Client().ApplyURI(URI))
